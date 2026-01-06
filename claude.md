@@ -18,8 +18,45 @@ Deep learning-based point-of-gaze estimation using eye and face images. Predicts
   - Each entry has: `face_path`, `left_eye_path`, `right_eye_path`, `user_id`, `valid`
 
 ### GazeCapture (Pretraining)
-- **Location**: `/data/datasets/prepped/gazecapture_prepped`
+- **Location**: `/media/a/saw/GazeCapture`
+- **Size**: ~140GB | 2.4M+ frames | 1,474 user sessions
+- **Source**: MIT/Apple GazeCapture dataset (Krafka, Khosla et al. 2017)
 - **Loader**: `gaze_dataloader.py`
+
+**Structure**:
+```
+/media/a/saw/GazeCapture/
+├── gazecapture.tar                    # 137GB compressed archive
+├── gazecapture_full_metadata.parquet  # 15MB metadata database
+├── train_itracker_fixed.py            # iTracker training
+├── train_resnet_gaze.py               # ResNet training
+├── mobile_vit.py                      # MobileViT model
+├── gaze_capture_make_ds.ipynb         # Preprocessing notebook
+│
+└── {UserID}/                          # 1,474 folders (00002-03523)
+    ├── frames/
+    │   ├── 00000.jpg                  # 480x640 RGB JPEGs
+    │   └── ...                        # 18-3,590 frames per user
+    ├── info.json                      # TotalFrames, NumFaceDetections, DeviceName
+    ├── dotInfo.json                   # Gaze targets: XPts, YPts, XCam, YCam
+    ├── appleFace.json                 # Face bounding boxes
+    ├── appleLeftEye.json              # Left eye boxes
+    ├── appleRightEye.json             # Right eye boxes
+    ├── faceGrid.json                  # 13x13 face grid
+    ├── screen.json                    # H, W, Orientation per frame
+    └── motion.json                    # IMU: accelerometer, gyroscope, quaternions
+```
+
+**Per-User JSON Files**:
+| File | Contents |
+|------|----------|
+| `info.json` | `TotalFrames`, `NumFaceDetections`, `NumEyeDetections`, `Dataset`, `DeviceName` |
+| `dotInfo.json` | `DotNum`, `XPts`, `YPts`, `XCam`, `YCam`, `Time` (gaze ground truth) |
+| `appleFace.json` | `X`, `Y`, `W`, `H`, `IsValid` arrays for face detection |
+| `appleLeftEye.json` / `appleRightEye.json` | Eye region bounding boxes |
+| `motion.json` | Accelerometer, gyroscope, attitude quaternions (~470KB) |
+
+**Stats**: 2,445,504 frames | Avg 1,659 frames/user | iPhone 6 + other devices
 
 ## Model Checkpoints
 
