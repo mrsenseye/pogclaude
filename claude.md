@@ -8,10 +8,18 @@ Deep learning-based point-of-gaze estimation using eye and face images. Predicts
 
 ## Datasets
 
-| Dataset | Location | Structure |
-|---------|----------|-----------|
-| Annotation Study | `/media/s/pogDatasetPrepped/` | `faces/`, `left_eye_crops/`, `right_eye_crops/` with user subdirs |
-| GazeCapture | `/data/datasets/prepped/gazecapture_prepped` | Pretrained dataset |
+### Annotation Study (Primary)
+- **Image Root**: `/media/s/pogDatasetPrepped`
+  - `faces/<user_id>/` - Face crops (448x448)
+  - `left_eye_crops/<user_id>/` - Left eye crops (128x128)
+  - `right_eye_crops/<user_id>/` - Right eye crops (128x128)
+- **JSON Manifest**: `/media/a/saw/pog/merged_dataset_first_session.json`
+  - Contains train/val/test splits with paths and metadata
+  - Each entry has: `face_path`, `left_eye_path`, `right_eye_path`, `user_id`, `valid`
+
+### GazeCapture (Pretraining)
+- **Location**: `/data/datasets/prepped/gazecapture_prepped`
+- **Loader**: `gaze_dataloader.py`
 
 ## Model Checkpoints
 
