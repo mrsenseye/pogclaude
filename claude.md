@@ -2,176 +2,239 @@
 
 ## Overview
 
-This project focuses on deep learning-based point-of-gaze estimation using eye and face images. The codebase at `/media/a/saw/pog` contains multiple neural network architectures, training pipelines, and evaluation tools for predicting where a user is looking on a screen.
+Deep learning-based point-of-gaze estimation using eye and face images. Predicts where a user is looking on a screen using multi-stream CNN architectures with attention mechanisms.
+
+**Deployed Model**: ITracker with Multi-Head Self-Attention (v1), pretrained on GazeCapture and finetuned on upside-down data from annotation study.
+
+## Datasets
+
+| Dataset | Location | Structure |
+|---------|----------|-----------|
+| Annotation Study | `/media/s/pogDatasetPrepped/` | `faces/`, `left_eye_crops/`, `right_eye_crops/` with user subdirs |
+| GazeCapture | `/data/datasets/prepped/gazecapture_prepped` | Pretrained dataset |
+
+## Model Checkpoints
+
+| Model | Path | Description |
+|-------|------|-------------|
+| Best POG (Deployed) | `/media/a/saw/pog/Best_POG_model_scripted.pt` | Production model |
+| GazeCapture trained | `/media/a/saw/pog/GC_trained_POG_model_scripted_cuda0.pt` | Right-side-up images |
+
+---
+
+## ITrackerMHSA Architecture Family
+
+### Shared Setup
+- **Inputs**: Face (3x448x448) + Left eye (3x128x128) + Right eye (3x128x128)
+- **Backbones**: Three ResNet-50 models
+  - `face_backbone`: Standard ResNet-50
+  - `leye_backbone`: ResNet-50 with dilated convolutions
+  - `reye_backbone`: ResNet-50 with dilated convolutions
+- **Features**: 2048-D per stream, forms three tokens [left_eye, right_eye, face]
+- **Attention**: 4 heads x 256-dim keys
+- **Output**: (x, y) gaze coordinates via MLP
+- **Parameters**: ~25M
+
+### v1 - MultiHeadAttBlock (Deployed)
+**File**: `ItrackerMHSA.py`
+
+Basic MHSA with linear Q/K/V projections and scaled dot-product attention. Includes residual connections, LayerNorm, and FFN.
+
+**Output Layers**:
+- `fc_eye`: Concatenated eyes (4096 → 128)
+- `fc_face`: Face features (2048 → 128 → 128)
+- `fc_out`: Final prediction (256 → 2)
+
+### v2 - HybridGazeAttention
+**File**: `ItrackerMHSAv2.py`
+
+Adds learned positional encodings. First runs self-attention over eye tokens to create combined eye vector, then face token queries eye vector (cross-attention). Fast and lightweight with explicit eye→face guidance.
+
+### v3 - TransformerEncoderBlock
+**File**: `ItrackerMHSAv2.py`
+
+Full transformer encoder over [left_eye, right_eye, face]. MHSA + residual + LayerNorm, then FFN + residual + LayerNorm. Richest token mixing, extensible with extra tokens (landmarks, depth), but heavier.
+
+### ITrackerMultiHeadAttention (New Variant)
+Custom MHSA with separate Wq/Wk/Wv, residual + LN, FFN + LN. Processes eyes and face with small MLPs. Compact one-layer encoder: cleaner than v1, lighter than v3.
+
+---
+
+## Training
+
+### Main Script
+```bash
+python train.py
+```
+**File**: `train.py`
+
+### Configuration
+```python
+learning_rate: 0.0001
+batch_size: 64 (train), 128 (val/test)
+epochs: 30
+weight_decay: 0.05
+optimizer: AdamW
+scheduler: CosineAnnealingLR
+loss: SmoothL1Loss
+metric: RMSE
+```
+
+### Backbone Freezing Strategy
+- **Epochs 1-5**: Frozen ResNet backbones (stabilizes early training)
+- **Epochs 6+**: All layers unfrozen for fine-tuning
+
+### Data Augmentation
+- Horizontal flipping (50%) with coordinate adjustment
+- Synchronized augmentation across face/eye crops
+- Small Gaussian noise on training labels
+- Translation, blur, color jitter, brightness/contrast (25% probability)
+
+### Weighted Sampling
+Computes inverse user frequency weights to balance representation and prevent bias toward users with more samples.
+
+---
+
+## Data Loaders
+
+### Upside-Down Loader (Production)
+**File**: `upside_down_gaze_dataloader.py`
+
+- Face: 448x448 RGB, ImageNet normalization
+- Eyes: 128x128 RGB each, ImageNet normalization
+- Converts device pixels to physical distances (cm)
+- `SynchronizedAugmentation` for consistent transforms
+
+**Device Calibration**:
+| Device | PPI | Screen Size |
+|--------|-----|-------------|
+| iPhone 15 Pro | 460 | 6.5cm |
+| iPhone 13 Pro | 460 | 6.45cm |
+| iPhone 12 Pro Max | 458 | 7.11cm |
+
+### GazeCapture Loader
+**File**: `gaze_dataloader.py`
+
+For pretraining on GazeCapture dataset.
+
+---
+
+## Other Model Architectures
+
+### GazeTR (Transformer)
+**File**: `GazeTR.py`
+
+ResNet18 backbone + 6-layer Transformer encoder (8 heads, 512 hidden dim). Uses CLS token, learnable position encoding for 7x7 patches. ~2M parameters.
+
+**Inputs**: Face (224x224) + bounding box (142-dim) + IMU data
+
+### HRNet (High-Resolution)
+**File**: `Hrnet.py` | **Training**: `train_hrnet.py`
+
+Multi-scale parallel branches maintaining high-resolution representations. 8 variants (w18_small to w64). Good for fine-grained spatial details.
+
+### GazeNet (Backbone Factory)
+**File**: `gazenet.py` | **Training**: `train_resnest.py`
+
+Supports 25+ backbones: ResNet, DenseNet, EfficientNet, Swin, DeiT, ResNeSt, MobileNet. FC layers: 128 → 128 → 2.
+
+### AffNet (Adaptive Normalization)
+**File**: `Affnet.py`
+
+Adaptive Group Normalization conditioned on face+rectangle features. Separate eye/face processing with SE-blocks.
+
+### BotNet (Bottleneck Attention)
+**File**: `botnet.py`
+
+ResNet-50 with self-attention replacing layer4. Multi-head attention with positional embeddings.
+
+---
+
+## Pupillometry / Eye Segmentation
+
+Eye segmentation using Mask2Former for pupil/iris detection and pupil-to-iris ratio (PIR) analysis.
+
+### Location
+```
+/home/esha/Segmentation/
+├── mask2former/
+│   ├── model.py      # Mask2FormerFinetuner
+│   ├── dataset.py    # SegmentationDataModule
+│   ├── config.py     # Hyperparameters
+│   └── losses.py     # Boundary, Tversky, Focal, CE+Dice
+├── train.py
+└── test.py
+```
+
+### Classes
+0: Background, 1: Iris, 2: Pupil, 3: Sclera
+
+### Data
+- RGB eye crops: `/data/datasets/cv/mp_good_images`
+- Training data: `/data/datasets/cv/Rgb_pupillometry_data`
+
+### Usage
+```bash
+# Training
+python /home/esha/Segmentation/train.py
+
+# Testing
+python /home/esha/Segmentation/test.py
+
+# Inference with visualization
+python Jai_inference.py --input_dir images/ --output_dir results/ --ckpt model.ckpt
+
+# PIR analysis
+python plr_testing.py --input_dir left_eyes/ --ckpt model.ckpt --output_csv results.csv
+```
+
+### Checkpoint
+`mask2former_RGB_pupillometry_with_MrSenseyeFlickrFace_Ref85.ckpt`
+
+---
 
 ## Project Structure
 
 ```
 /media/a/saw/pog/
-├── models/backbone/          # Neural network backbones (ResNet, DenseNet, Swin, MobileNet, etc.)
-├── malfoy/                   # ML training framework (trainer, model zoo, data loaders)
-│   ├── trainer.py            # Main training loop with WandB integration
-│   ├── model_manager/model_zoo/  # 17+ model implementations
-│   └── data_loader/          # Dataset classes
-├── dobby/                    # Data processing framework (preprocessing, scheduling)
-├── Gaze/                     # Gaze estimation wrappers
-├── POG_Wrapper/              # POG-specific utilities
-├── checkpoints_*/            # 37 checkpoint directories (~115GB)
-├── results/                  # Experiment outputs (~100GB)
-├── pog_preprocessed/         # Preprocessed training data (train/val/test splits)
-└── wandb/                    # Experiment tracking (40+ runs)
+├── ItrackerMHSA.py           # Deployed model (v1)
+├── ItrackerMHSAv2.py         # v2 and v3 variants
+├── train.py                  # Main training script
+├── upside_down_gaze_dataloader.py  # Production data loader
+├── gaze_dataloader.py        # GazeCapture loader
+├── GazeTR.py                 # Transformer model
+├── Hrnet.py                  # High-resolution model
+├── gazenet.py                # Backbone factory
+├── Affnet.py                 # Adaptive normalization
+├── botnet.py                 # Bottleneck attention
+├── train_hrnet.py            # HRNet training
+├── train_resnest.py          # ResNest training
+├── models/backbone/          # Neural network backbones
+├── malfoy/                   # ML training framework
+├── dobby/                    # Data processing framework
+├── checkpoints_*/            # Model checkpoints
+├── results/                  # Experiment outputs
+└── wandb/                    # Experiment tracking
 ```
 
-## Key Model Architectures
-
-### 1. ItrackerMHSAv2 (Primary Model)
-- **File**: `ItrackerMHSAv2.py`
-- **Architecture**: 3-stream ResNet50 with Multi-Head Self-Attention
-- **Inputs**: Face (448x448), Left eye (128x128), Right eye (128x128)
-- **Features**: HybridGazeAttention (eyes self-attention + face-to-eyes cross-attention)
-
-### 2. GazeTR (Transformer-based)
-- **File**: `GazeTR.py`
-- **Architecture**: ResNet18 + 6-layer Transformer Encoder
-- **Features**: Learned positional embeddings, CLS token, facial landmarks input
-
-### 3. Itracker_Transformer
-- **File**: `Itracker_Transformer.py`
-- **Architecture**: ResNet18 + Swin Transformer V2
-- **Features**: Window-based attention, hierarchical processing
-
-### 4. Mobile iTracker
-- **File**: `mobile_iTracker.py`
-- **Architecture**: MobileNetV3/EfficientNet + Latent Attention Fusion
-- **Purpose**: Mobile deployment optimization
-
-### 5. GazeNet
-- **File**: `gazenet.py`
-- **Architecture**: Configurable backbone (ResNet, ResNest, DenseNet, EfficientNet, Swin, DeiT)
-- **Simple**: Face image → Backbone → FC layers → 2D gaze
-
-## Data Format
-
-### Inputs
-- **Face images**: RGB, typically 224x224 to 512x512
-- **Eye crops**: Left and right eye regions, 128x128 to 300x300
-- **Facial landmarks**: 468-point MediaPipe FaceMesh coordinates
-- **Auxiliary**: IMU data, face bounding boxes
-
-### Outputs
-- **Gaze coordinates**: 2D (x, y) values representing screen position
-- **Units**: Pixels or centimeters depending on configuration
-
-### Dataset Files
-- `train_val_test_filepaths*.json` - Data split manifests (285MB+)
-- `landmarks_data_facemesh_points.json` - Facial landmarks (1.5GB)
-- `pog_dataset_complete.parquet` - Complete dataset in columnar format
-- CSV files for calibration data, model predictions, and results
-
-## Training
-
-### Main Entry Points
-```bash
-# Primary training script
-python train.py
-
-# Specific architectures
-python train_hrnet.py
-python train_resnest.py
-python train_mobile.py
-python train_distillation.py
-```
-
-### Configuration
-- **Config file**: `train_config_gaze.yml`
-- **Key parameters**:
-  - batch_size: 512
-  - epochs: 50
-  - learning_rate: 0.0005
-  - optimizer: AdamW
-  - warmup: 3 epochs
-
-### Experiment Tracking
-- WandB integration for metrics and visualization
-- MLflow in `malfoy/model_manager/mlruns/`
-
-## Data Loading
-
-### Primary Data Loaders
-- `upside_down_gaze_dataloader.py` - Main production loader with augmentation
-- `gaze_dataloader.py` - Alternative with MediaPipe landmarks
-- `GazeCapture_dataloader.py` - iTracker-style loading
-- `malfoy/data_loader/gazeData.py` - Flexible multi-modal loader
-
-### Augmentations
-- Color jitter, blur, brightness adjustments
-- Geometric transforms (translation)
-- Upside-down variants for device orientation robustness
-- CutMix for data mixing
-
-## Pre-trained Models
-
-| Model | File | Size | Description |
-|-------|------|------|-------------|
-| Best POG | `Best_POG_model_scripted.pt` | 338MB | Production model |
-| GazeCapture trained | `GC_trained_POG_model_scripted_cuda0.pt` | 338MB | GazeCapture dataset |
-| Device agnostic | `device_agnostic_traced_model.pt` | 263MB | Cross-device |
-| Mobile iTracker | `Itracker_Mobile_Traced.pt` | 58MB | Mobile deployment |
-| XGaze pretrained | `xgaze_resnet50_pretrained.pt` | 99MB | XGaze dataset |
+---
 
 ## Dependencies
 
-Key libraries:
 - PyTorch 2.0+ with CUDA
-- pytorch-lightning
+- PyTorch Lightning
 - timm (PyTorch Image Models)
 - MediaPipe (facial landmarks)
-- wandb (experiment tracking)
+- WandB (experiment tracking)
+- Transformers (HuggingFace) - for Mask2Former
 - pandas, numpy, opencv
 
-Environment files:
-- `environment_hogwarts.yml`
-- `hogwarts_env.yml`
-- `requirements.txt`
+## Quick Reference
 
-## Evaluation
-
-```bash
-python model_eval.py
-python model_eval_final.py
-python gaze_model_test.py
-```
-
-Metrics are logged to CSV files and WandB dashboards.
-
-## Mobile Deployment
-
-- Core ML package: `Itracker_Mobile.mlpackage/`
-- TorchScript exports for iOS/Android
-- MediaPipe face landmarker: `face_landmarker.task`
-
-## Directory Conventions
-
-- `checkpoints_<model>_<variant>/` - Model checkpoints by architecture
-- `results/` - Evaluation outputs and metrics
-- `inference_output_*/` - Inference results (cm, pixels, viz)
-- `*_preprocessed/` - Preprocessed data splits
-
-## Common Tasks
-
-### Train a new model
-1. Prepare data in `pog_preprocessed/` format
-2. Configure `train_config_gaze.yml`
-3. Run `python train.py`
-
-### Evaluate a checkpoint
-1. Load checkpoint from `checkpoints_*/`
-2. Run `python model_eval.py --checkpoint <path>`
-
-### Export for mobile
-1. Use `jit_exporter_pog.ipynb`
-2. Convert to Core ML or TorchScript
-
-### Add a new backbone
-1. Add implementation to `models/backbone/`
-2. Register in `malfoy/model_manager/model_zoo/__init__.py`
+| Task | Command |
+|------|---------|
+| Train POG model | `python train.py` |
+| Train HRNet | `python train_hrnet.py` |
+| Train ResNest | `python train_resnest.py` |
+| Train segmentation | `python /home/esha/Segmentation/train.py` |
+| PIR analysis | `python plr_testing.py --input_dir eyes/ --ckpt model.ckpt` |
