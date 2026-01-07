@@ -1,0 +1,14 @@
+metric,value
+Total Frames,14834
+Calibration Frames,13376
+Sessions,2
+Model,Best_POG_model_scripted.pt
+Mean Error (px),309.4
+Median Error (px),309.5
+Std Error (px),153.2
+X Bias (px),105.1
+Y Bias (px),84.4
+POG X Mean (cm),-0.848
+POG Y Mean (cm),7.154
+PIR Left Mean,0.188
+PIR Right Mean,0.17
