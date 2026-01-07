@@ -62,8 +62,52 @@ Deep learning-based point-of-gaze estimation using eye and face images. Predicts
 
 | Model | Path | Description |
 |-------|------|-------------|
-| Best POG (Deployed) | `/media/a/saw/pog/Best_POG_model_scripted.pt` | Production model |
+| Best POG (Deployed) | `/media/a/saw/pog/Best_POG_model_scripted.pt` | Production model (338MB) |
 | GazeCapture trained | `/media/a/saw/pog/GC_trained_POG_model_scripted_cuda0.pt` | Right-side-up images |
+
+### Deployed Model I/O Specification
+
+**Model**: TorchScript `ITrackerMultiHeadAttention` wrapped in `Itracker_POG`
+
+**Inputs** (ImageNet normalized):
+| Input | Shape | Description |
+|-------|-------|-------------|
+| `face` | `[B, 3, 448, 448]` | RGB face image |
+| `left_eye` | `[B, 3, 128, 128]` | RGB left eye crop |
+| `right_eye` | `[B, 3, 128, 128]` | RGB right eye crop |
+
+**Output**:
+| Output | Shape | Description |
+|--------|-------|-------------|
+| `gaze` | `[B, 2]` | `(x, y)` gaze coordinates in **centimeters (cm)** |
+
+**Coordinate System** (from `convert_pog()`):
+```python
+x_cm = ((x_pt * 3) / ppi) * 2.54   # Pixels to cm
+y_cm = ((y_pt * 3) / ppi) * 2.54
+x_true = (screen_cm - x_cm) - x_offset  # Relative to screen
+y_true = y_cm - y_offset
+```
+
+**Device Calibration**:
+| Device | PPI | Screen (cm) | X Offset | Y Offset |
+|--------|-----|-------------|----------|----------|
+| iPhone 15 Pro | 460 | 6.5 | 2.5 | 0.47 |
+| iPhone 13 Pro | 460 | 6.45 | 4.05 | 0.4 |
+| iPhone 12 Pro Max | 458 | 7.11 | 2.87 | 0.2 |
+
+**Usage**:
+```python
+import torch
+
+model = torch.jit.load("Best_POG_model_scripted.pt")
+model.eval()
+
+# ImageNet normalization required
+with torch.no_grad():
+    gaze_cm = model(face, left_eye, right_eye)  # [B, 2]
+    x_cm, y_cm = gaze_cm[0, 0], gaze_cm[0, 1]
+```
 
 ---
 
