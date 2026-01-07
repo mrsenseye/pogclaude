@@ -19,7 +19,7 @@ Deep learning-based point-of-gaze estimation using eye and face images. Predicts
 
 ### GazeCapture (Pretraining)
 - **Location**: `/media/a/saw/GazeCapture`
-- **Size**: ~140GB | 2.4M+ frames | 1,474 user sessions
+- **Size**: ~297GB | 2.4M+ frames | 1,474 user sessions
 - **Source**: MIT/Apple GazeCapture dataset (Krafka, Khosla et al. 2017)
 - **Loader**: `gaze_dataloader.py`
 
